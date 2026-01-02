@@ -20,14 +20,21 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
     try {
         const body = request.method !== "GET" && request.method !== "HEAD" ? await request.text() : undefined;
 
-        const response = await fetch(url, {
+        const fetchOptions: RequestInit = {
             method: request.method,
             headers: {
                 "Content-Type": "application/json",
                 "x-api-key": apiKey,
             },
             body,
-        });
+        };
+
+        // Cache GET requests for 60 seconds to protect AWS costs
+        if (request.method === "GET") {
+            fetchOptions.next = { revalidate: 60 };
+        }
+
+        const response = await fetch(url, fetchOptions);
 
         console.log(`[Proxy] Response Status: ${response.status}`);
 
@@ -38,9 +45,16 @@ async function proxy(request: NextRequest, { params }: { params: Promise<{ path:
         }
 
         const data = await response.blob();
+
+        const responseHeaders = new Headers(response.headers);
+        if (request.method === "GET") {
+            // Browser cache for 1 minute, shared cache (CDN) for 1 minute
+            responseHeaders.set("Cache-Control", "public, s-maxage=60, stale-while-revalidate=30");
+        }
+
         return new NextResponse(data, {
             status: response.status,
-            headers: response.headers,
+            headers: responseHeaders,
         });
 
     } catch (error) {
